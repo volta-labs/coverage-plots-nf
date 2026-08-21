@@ -2,15 +2,15 @@
 nextflow.enable.dsl = 2
 
 // ── Parameters ────────────────────────────────────────────────────────────────
-params.input      = null   // required: S3 path to samplesheet CSV (sample,bam,bai)
-params.groups_tsv = null   // optional: S3 path to groups TSV (sample<TAB>group) — same file used for sequencing pipeline
+params.bam_dir    = null   // required: S3 folder containing *.bam and *.bam.bai files
+params.groups_tsv = null   // optional: S3 path to groups TSV (sample<TAB>group)
 params.bed        = 's3://volta-labs-sequencing-data/reference-genome-index/hybrid-capture-target-files/hcs_v2_inferred_final_v1.bed'
 params.gc_cache   = 's3://volta-labs-sequencing-data/reference-genome-index/hybrid-capture-target-files/hcs_v2_inferred_target_gc_v1.csv'
 params.run_name   = 'HCS_QC'
-params.outdir     = null   // required: S3 path for outputs, e.g. s3://volta-labs-sequencing-data/qc_results
+params.outdir     = null   // required: S3 path for outputs
 
-if (!params.input)  { error "Please provide --input <samplesheet.csv>" }
-if (!params.outdir) { error "Please provide --outdir <s3://bucket/path>" }
+if (!params.bam_dir) { error "Please provide --bam_dir <s3://bucket/path/to/bam/folder/>" }
+if (!params.outdir)  { error "Please provide --outdir <s3://bucket/path>" }
 
 // ── Process: per-target coverage ─────────────────────────────────────────────
 process BEDTOOLS_COVERAGE {
@@ -76,19 +76,15 @@ process PLOT_HETEROGENEITY {
     path "*.png"
 
     script:
-    // Build qc_{sample}/ directory structure expected by the discovery script
     def setup_dirs = meta_list.collect { sample, group ->
         "mkdir -p qc_${sample} && ln -sf \"\${PWD}/${sample}.coverage.bed\" qc_${sample}/hcs_coverage_raw.bed"
     }.join("\n")
 
-    // Build sample sheet TSV (sample<TAB>group)
     def tsv_lines = meta_list.collect { sample, group -> "${sample}\t${group}" }.join("\\n")
 
     """
-    # Reconstruct directory structure expected by plot_coverage_heterogeneity.py
     ${setup_dirs}
 
-    # Write sample sheet
     printf "sample\\tgroup\\n${tsv_lines}\\n" > sample_sheet.tsv
 
     plot_coverage_heterogeneity.py \\
@@ -101,7 +97,7 @@ process PLOT_HETEROGENEITY {
 // ── Workflow ──────────────────────────────────────────────────────────────────
 workflow {
 
-    // Load groups TSV into a map if provided: { sample -> group }
+    // Load groups TSV into a map: { sample -> group }
     def group_map = [:]
     if (params.groups_tsv) {
         file(params.groups_tsv).readLines().drop(1).each { line ->
@@ -110,28 +106,27 @@ workflow {
         }
     }
 
-    // Parse samplesheet — group comes from groups_tsv if supplied, else samplesheet group col, else run_name
+    // Auto-discover BAM files from bam_dir; extract sample name from filename
+    // Strips _aligned_sorted and _S## suffixes (e.g. SGULP15_1_S1_aligned_sorted.bam -> SGULP15_1)
     Channel
-        .fromPath(params.input)
-        .splitCsv(header: true)
-        .map { row ->
-            def group = group_map.containsKey(row.sample)
-                ? group_map[row.sample]
-                : (row.containsKey('group') && row.group ? row.group : params.run_name)
-            tuple(row.sample, group, file(row.bam), file(row.bai))
+        .fromPath("${params.bam_dir}/*.bam")
+        .map { bam ->
+            def bai  = file("${bam}.bai")
+            def name = bam.name
+                .replaceAll(/_aligned_sorted\.bam$/, '')
+                .replaceAll(/_S\d+$/, '')
+            def group = group_map.containsKey(name) ? group_map[name] : params.run_name
+            tuple(name, group, bam, bai)
         }
         .set { ch_input }
 
     bed      = file(params.bed)
     gc_cache = file(params.gc_cache)
 
-    // Step 1: bedtools coverage per sample
     BEDTOOLS_COVERAGE(ch_input, bed)
 
-    // Step 2: per-sample plots
     PLOT_QC(BEDTOOLS_COVERAGE.out, gc_cache)
 
-    // Step 3: run-level heterogeneity plot
     BEDTOOLS_COVERAGE.out
         .multiMap { sample, group, bed ->
             meta: [sample, group]
