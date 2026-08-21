@@ -115,7 +115,7 @@ workflow {
             def name = bam.name
                 .replaceAll(/_aligned_sorted\.bam$/, '')
                 .replaceAll(/_S\d+$/, '')
-            def bai = bam.sibling("${bam.name}.bai")
+            def bai = bam.parent.resolve("${bam.name}.bai")
             def group = group_map.containsKey(name) ? group_map[name] : params.run_name
             tuple(name, group, bam, bai)
         }
