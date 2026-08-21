@@ -108,15 +108,20 @@ workflow {
 
     // Auto-discover BAM files from bam_dir; extract sample name from filename
     // Strips _aligned_sorted and _S## suffixes (e.g. SGULP15_1_S1_aligned_sorted.bam -> SGULP15_1)
+    // Auto-discover BAMs; if groups_tsv provided, only process samples listed in it (allowlist)
     Channel
         .fromPath("${params.bam_dir}/*.bam")
         .map { bam ->
-            def bai  = file("${bam}.bai")
             def name = bam.name
                 .replaceAll(/_aligned_sorted\.bam$/, '')
                 .replaceAll(/_S\d+$/, '')
+            def bai = bam.sibling("${bam.name}.bai")
             def group = group_map.containsKey(name) ? group_map[name] : params.run_name
             tuple(name, group, bam, bai)
+        }
+        .filter { name, group, bam, bai ->
+            // If groups_tsv supplied, skip samples not listed in it
+            params.groups_tsv ? group_map.containsKey(name) : true
         }
         .set { ch_input }
 
