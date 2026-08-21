@@ -46,6 +46,7 @@ process PLOT_QC {
     input:
     tuple val(sample), val(group), path(coverage_bed)
     path gc_cache
+    path plot_script
 
     output:
     path "*.png"
@@ -53,7 +54,7 @@ process PLOT_QC {
     script:
     """
     mkdir -p out
-    plot_hcs_qc.py \\
+    python3 ${plot_script} \\
         --targets ${coverage_bed} \\
         --gc      ${gc_cache} \\
         --outdir  out \\
@@ -71,6 +72,7 @@ process PLOT_HETEROGENEITY {
     input:
     path(beds)         // collected coverage beds, named ${sample}.coverage.bed
     path(sample_sheet) // TSV with sample<TAB>group, built by collectFile in workflow
+    path het_script
 
     output:
     path "*.png"
@@ -84,7 +86,7 @@ process PLOT_HETEROGENEITY {
         ln -sf "\${PWD}/\${bed}" "qc_\${sample}/hcs_coverage_raw.bed"
     done
 
-    plot_coverage_heterogeneity.py \\
+    python3 ${het_script} \\
         --dir          . \\
         --run-name     ${params.run_name} \\
         --sample-sheet ${sample_sheet}
@@ -119,12 +121,14 @@ workflow {
         }
         .set { ch_input }
 
-    bed      = file(params.bed)
-    gc_cache = file(params.gc_cache)
+    bed        = file(params.bed)
+    gc_cache   = file(params.gc_cache)
+    qc_script  = file("${projectDir}/bin/plot_hcs_qc.py")
+    het_script = file("${projectDir}/bin/plot_coverage_heterogeneity.py")
 
     BEDTOOLS_COVERAGE(ch_input, bed)
 
-    PLOT_QC(BEDTOOLS_COVERAGE.out, gc_cache)
+    PLOT_QC(BEDTOOLS_COVERAGE.out, gc_cache, qc_script)
 
     // Build sample sheet TSV from coverage output — avoids Groovy list flattening issues
     BEDTOOLS_COVERAGE.out
@@ -138,5 +142,5 @@ workflow {
         .collect()
         .set { ch_all_beds }
 
-    PLOT_HETEROGENEITY(ch_all_beds, ch_sample_sheet)
+    PLOT_HETEROGENEITY(ch_all_beds, ch_sample_sheet, het_script)
 }
