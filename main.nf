@@ -69,28 +69,25 @@ process PLOT_HETEROGENEITY {
     publishDir "${params.outdir}/${params.run_name}", mode: 'copy'
 
     input:
-    val(meta_list)   // collected list of [sample, group] pairs
-    path(beds)       // collected coverage beds, named ${sample}.coverage.bed
+    path(beds)         // collected coverage beds, named ${sample}.coverage.bed
+    path(sample_sheet) // TSV with sample<TAB>group, built by collectFile in workflow
 
     output:
     path "*.png"
 
     script:
-    def setup_dirs = meta_list.collect { sample, group ->
-        "mkdir -p qc_${sample} && ln -sf \"\${PWD}/${sample}.coverage.bed\" qc_${sample}/hcs_coverage_raw.bed"
-    }.join("\n")
-
-    def tsv_lines = meta_list.collect { sample, group -> "${sample}\t${group}" }.join("\\n")
-
     """
-    ${setup_dirs}
-
-    printf "sample\\tgroup\\n${tsv_lines}\\n" > sample_sheet.tsv
+    # Reconstruct qc_{sample}/ directory structure from bed filenames
+    for bed in *.coverage.bed; do
+        sample=\${bed%.coverage.bed}
+        mkdir -p "qc_\${sample}"
+        ln -sf "\${PWD}/\${bed}" "qc_\${sample}/hcs_coverage_raw.bed"
+    done
 
     plot_coverage_heterogeneity.py \\
         --dir          . \\
         --run-name     ${params.run_name} \\
-        --sample-sheet sample_sheet.tsv
+        --sample-sheet ${sample_sheet}
     """
 }
 
@@ -106,21 +103,18 @@ workflow {
         }
     }
 
-    // Auto-discover BAM files from bam_dir; extract sample name from filename
-    // Strips _aligned_sorted and _S## suffixes (e.g. SGULP15_1_S1_aligned_sorted.bam -> SGULP15_1)
-    // Auto-discover BAMs; if groups_tsv provided, only process samples listed in it (allowlist)
+    // Auto-discover BAMs; if groups_tsv provided, only process samples listed in it
     Channel
         .fromPath("${params.bam_dir}/*.bam")
         .map { bam ->
             def name = bam.name
                 .replaceAll(/_aligned_sorted\.bam$/, '')
                 .replaceAll(/_S\d+$/, '')
-            def bai = bam.parent.resolve("${bam.name}.bai")
+            def bai  = bam.parent.resolve("${bam.name}.bai")
             def group = group_map.containsKey(name) ? group_map[name] : params.run_name
             tuple(name, group, bam, bai)
         }
         .filter { name, group, bam, bai ->
-            // If groups_tsv supplied, skip samples not listed in it
             params.groups_tsv ? group_map.containsKey(name) : true
         }
         .set { ch_input }
@@ -132,15 +126,17 @@ workflow {
 
     PLOT_QC(BEDTOOLS_COVERAGE.out, gc_cache)
 
+    // Build sample sheet TSV from coverage output — avoids Groovy list flattening issues
     BEDTOOLS_COVERAGE.out
-        .multiMap { sample, group, bed ->
-            meta: [sample, group]
-            bed:  bed
-        }
-        .set { cov_ch }
+        .map { sample, group, bed -> "${sample}\t${group}" }
+        .collectFile(name: 'sample_sheet.tsv', newLine: true, seed: 'sample\tgroup')
+        .set { ch_sample_sheet }
 
-    cov_ch.meta.collect().set { ch_meta }
-    cov_ch.bed.collect().set  { ch_beds }
+    // Collect all coverage beds into one process
+    BEDTOOLS_COVERAGE.out
+        .map { sample, group, bed -> bed }
+        .collect()
+        .set { ch_all_beds }
 
-    PLOT_HETEROGENEITY(ch_meta, ch_beds)
+    PLOT_HETEROGENEITY(ch_all_beds, ch_sample_sheet)
 }
