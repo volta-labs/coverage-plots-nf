@@ -27,8 +27,13 @@ process BEDTOOLS_COVERAGE {
 
     script:
     """
+    # Normalise BED chromosome names to match BAM (add 'chr' prefix if absent).
+    # Handles both chr-prefixed BEDs and non-prefixed BEDs (e.g. SOPHiA HCS v2.0).
+    # Idempotent: lines already starting with 'chr' pass through unchanged.
+    awk 'BEGIN{OFS="\\t"} /^[^#]/ && \$1 !~ /^chr/ {\$1="chr"\$1} {print}' ${bed} > normalised_design.bed
+
     bedtools coverage \\
-        -a ${bed} \\
+        -a normalised_design.bed \\
         -b ${bam} \\
         -mean \\
         > ${sample}.coverage.bed
