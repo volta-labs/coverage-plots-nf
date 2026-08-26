@@ -44,6 +44,11 @@ print("Loading coverage files...")
 targets = pd.read_csv(TARGET_COV_BED, sep="\t", header=None,
                       names=["chrom","start","end","coverage"])
 
+# Normalise chrom names: add 'chr' prefix if absent (handles BEDs with '1','2'... or 'chr1','chr2'...)
+targets["chrom"] = targets["chrom"].astype(str).apply(
+    lambda c: c if c.startswith("chr") else f"chr{c}"
+)
+
 # filter to standard chroms only (excludes alt/unplaced contigs)
 targets = targets[targets["chrom"].isin(CHROMS)].copy()
 
