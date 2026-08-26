@@ -87,6 +87,10 @@ def compute_heterogeneity(samples):
     for label, bed_path, group in samples:
         df = pd.read_csv(bed_path, sep="\t", header=None,
                          names=["chrom","start","end","coverage"])
+        # Normalise chrom names: add 'chr' prefix if absent (handles BEDs with '1','2'... or 'chr1','chr2'...)
+        df["chrom"] = df["chrom"].astype(str).apply(
+            lambda c: c if c.startswith("chr") else f"chr{c}"
+        )
         df = df[df["chrom"].isin(CHROMS)].copy()
         if df.empty or df["coverage"].sum() == 0:
             print(f"  WARNING: {label} — no coverage, skipping")
