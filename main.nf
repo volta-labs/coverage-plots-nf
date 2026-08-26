@@ -32,9 +32,13 @@ process BEDTOOLS_COVERAGE {
     # Idempotent: lines already starting with 'chr' pass through unchanged.
     awk 'BEGIN{OFS="\\t"} /^[^#]/ && \$1 !~ /^chr/ {\$1="chr"\$1} {print}' ${bed} > normalised_design.bed
 
+    # Remove duplicate reads before coverage calculation to match SOPHiA's molecule-based counting.
+    # Input BAMs are pre-deduplication (_aligned_sorted.bam); markdup -r removes duplicates in place.
+    samtools markdup -r -@ ${task.cpus} ${bam} dedup.bam
+
     bedtools coverage \\
         -a normalised_design.bed \\
-        -b ${bam} \\
+        -b dedup.bam \\
         -mean \\
         > ${sample}.coverage.bed
     """
