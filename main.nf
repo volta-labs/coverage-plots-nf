@@ -22,8 +22,11 @@ process BEDTOOLS_COVERAGE {
     tuple val(sample), val(group), path(bam), path(bai)
     path bed
 
+    publishDir "${params.outdir}/${params.run_name}/markdup_stats", mode: 'copy', pattern: "*.markdup.txt"
+
     output:
     tuple val(sample), val(group), path("${sample}.coverage.bed")
+    path "${sample}.markdup.txt"
 
     script:
     """
@@ -38,7 +41,7 @@ process BEDTOOLS_COVERAGE {
     samtools collate -O -u -@ ${task.cpus} ${bam} tmp_collate | \
         samtools fixmate -m -u - - | \
         samtools sort -u -@ ${task.cpus} - | \
-        samtools markdup -r -@ ${task.cpus} - dedup.bam
+        samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
     bedtools coverage \\
         -a normalised_design.bed \\
@@ -141,16 +144,16 @@ workflow {
 
     BEDTOOLS_COVERAGE(ch_input, bed)
 
-    PLOT_QC(BEDTOOLS_COVERAGE.out, gc_cache, qc_script)
+    PLOT_QC(BEDTOOLS_COVERAGE.out[0], gc_cache, qc_script)
 
     // Build sample sheet TSV from coverage output — avoids Groovy list flattening issues
-    BEDTOOLS_COVERAGE.out
+    BEDTOOLS_COVERAGE.out[0]
         .map { sample, group, bed -> "${sample}\t${group}" }
         .collectFile(name: 'sample_sheet.tsv', newLine: true, seed: 'sample\tgroup')
         .set { ch_sample_sheet }
 
     // Collect all coverage beds into one process
-    BEDTOOLS_COVERAGE.out
+    BEDTOOLS_COVERAGE.out[0]
         .map { sample, group, bed -> bed }
         .collect()
         .set { ch_all_beds }
