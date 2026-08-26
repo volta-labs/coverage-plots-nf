@@ -33,8 +33,12 @@ process BEDTOOLS_COVERAGE {
     awk 'BEGIN{OFS="\\t"} /^[^#]/ && \$1 !~ /^chr/ {\$1="chr"\$1} {print}' ${bed} > normalised_design.bed
 
     # Remove duplicate reads before coverage calculation to match SOPHiA's molecule-based counting.
-    # Input BAMs are pre-deduplication (_aligned_sorted.bam); markdup -r removes duplicates in place.
-    samtools markdup -r -@ ${task.cpus} ${bam} dedup.bam
+    # Input BAMs are pre-deduplication (_aligned_sorted.bam).
+    # markdup requires mate scores: collate (name-sort) -> fixmate -m -> coord-sort -> markdup -r.
+    samtools collate -O -u -@ ${task.cpus} ${bam} tmp_collate | \
+        samtools fixmate -m -u - - | \
+        samtools sort -u -@ ${task.cpus} - | \
+        samtools markdup -r -@ ${task.cpus} - dedup.bam
 
     bedtools coverage \\
         -a normalised_design.bed \\
