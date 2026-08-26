@@ -95,8 +95,8 @@ def compute_heterogeneity(samples):
         if df.empty or df["coverage"].sum() == 0:
             print(f"  WARNING: {label} — no coverage, skipping")
             continue
-        mean_cov   = df["coverage"].mean()
-        df["norm"] = df["coverage"] / mean_cov
+        median_cov = df["coverage"].median()
+        df["norm"] = df["coverage"] / median_cov
         total      = len(df)
         outside    = ((df["norm"] < LOW_THRESH) | (df["norm"] > HIGH_THRESH)).sum()
         het_pct    = outside / total * 100
