@@ -16,6 +16,9 @@ if (!params.outdir)  { error "Please provide --outdir <s3://bucket/path>" }
 process BEDTOOLS_COVERAGE {
     tag "$sample"
 
+    memory '32 GB'
+    cpus   4
+
     conda 'bioconda::bedtools=2.31.1 bioconda::samtools=1.19'
 
     input:
