@@ -27,8 +27,6 @@ process BEDTOOLS_COVERAGE {
     output:
     tuple val(sample), val(group), path("${sample}.coverage.bed")
     path "${sample}.markdup.txt"
-    path "${sample}.mapq20.coverage.bed"
-    path "${sample}.mapq30.coverage.bed"
 
     script:
     """
@@ -45,22 +43,15 @@ process BEDTOOLS_COVERAGE {
         samtools sort -u -@ ${task.cpus} - | \
         samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
-    # No MAPQ filter
-    bedtools coverage \\
-        -a normalised_design.bed \\
-        -b dedup.bam \\
-        -mean \\
+    # Count fragments (molecules) per target region to match SOPHiA's molecule-based coverage metric.
+    # -f 64 keeps only R1 reads so each fragment is counted once (not twice as two reads).
+    # -counts gives the number of overlapping fragments per region (not per-base mean depth).
+    samtools view -b -f 64 -@ ${task.cpus} dedup.bam | \\
+        bedtools coverage \\
+            -a normalised_design.bed \\
+            -b - \\
+            -counts \\
         > ${sample}.coverage.bed
-
-    # MAPQ >= 20 filtered coverage
-    samtools view -bq 20 -@ ${task.cpus} dedup.bam | \\
-        bedtools coverage -a normalised_design.bed -b - -mean \\
-        > ${sample}.mapq20.coverage.bed
-
-    # MAPQ >= 30 filtered coverage
-    samtools view -bq 30 -@ ${task.cpus} dedup.bam | \\
-        bedtools coverage -a normalised_design.bed -b - -mean \\
-        > ${sample}.mapq30.coverage.bed
     """
 }
 
@@ -92,10 +83,35 @@ process PLOT_QC {
     """
 }
 
-// ── Import PLOT_HETEROGENEITY three times with aliases (DSL2 multi-call pattern) ─
-include { PLOT_HETEROGENEITY as PLOT_HETEROGENEITY_NOFILTER } from './modules/plot_heterogeneity'
-include { PLOT_HETEROGENEITY as PLOT_HETEROGENEITY_MAPQ20   } from './modules/plot_heterogeneity'
-include { PLOT_HETEROGENEITY as PLOT_HETEROGENEITY_MAPQ30   } from './modules/plot_heterogeneity'
+// ── Process: coverage heterogeneity plot (across all samples in run) ──────────
+process PLOT_HETEROGENEITY {
+    conda 'conda-forge::python=3.11 conda-forge::numpy conda-forge::pandas conda-forge::matplotlib-base'
+
+    publishDir "${params.outdir}/${params.run_name}", mode: 'copy'
+
+    input:
+    path(beds)         // collected coverage beds, named ${sample}.coverage.bed
+    path(sample_sheet) // TSV with sample<TAB>group, built by collectFile in workflow
+    path het_script
+
+    output:
+    path "*.png"
+
+    script:
+    """
+    # Reconstruct qc_{sample}/ directory structure from bed filenames
+    for bed in *.coverage.bed; do
+        sample=\${bed%.coverage.bed}
+        mkdir -p "qc_\${sample}"
+        ln -sf "\${PWD}/\${bed}" "qc_\${sample}/hcs_coverage_raw.bed"
+    done
+
+    python3 ${het_script} \\
+        --dir          . \\
+        --run-name     ${params.run_name} \\
+        --sample-sheet ${sample_sheet}
+    """
+}
 
 // ── Workflow ──────────────────────────────────────────────────────────────────
 workflow {
@@ -140,21 +156,11 @@ workflow {
         .collectFile(name: 'sample_sheet.tsv', newLine: true, seed: 'sample\tgroup')
         .set { ch_sample_sheet }
 
-    // Collect all coverage beds into one process (three sets: no filter, mapq20, mapq30)
+    // Collect all coverage beds for heterogeneity plot
     BEDTOOLS_COVERAGE.out[0]
         .map { sample, group, bed -> bed }
         .collect()
         .set { ch_all_beds }
 
-    BEDTOOLS_COVERAGE.out[2]
-        .collect()
-        .set { ch_mapq20_beds }
-
-    BEDTOOLS_COVERAGE.out[3]
-        .collect()
-        .set { ch_mapq30_beds }
-
-    PLOT_HETEROGENEITY_NOFILTER(ch_all_beds,    ch_sample_sheet, het_script, params.run_name)
-    PLOT_HETEROGENEITY_MAPQ20(ch_mapq20_beds,  ch_sample_sheet, het_script, "${params.run_name}_mapq20")
-    PLOT_HETEROGENEITY_MAPQ30(ch_mapq30_beds,  ch_sample_sheet, het_script, "${params.run_name}_mapq30")
+    PLOT_HETEROGENEITY(ch_all_beds, ch_sample_sheet, het_script)
 }
