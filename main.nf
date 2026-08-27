@@ -92,38 +92,10 @@ process PLOT_QC {
     """
 }
 
-// ── Process: coverage heterogeneity plot (across all samples in run) ──────────
-process PLOT_HETEROGENEITY {
-    conda 'conda-forge::python=3.11 conda-forge::numpy conda-forge::pandas conda-forge::matplotlib-base'
-
-    publishDir { "${params.outdir}/${run_name}" }, mode: 'copy'
-
-    input:
-    path(beds)          // collected coverage beds (any suffix: .coverage.bed, .mapq20.coverage.bed, etc.)
-    path(sample_sheet)  // TSV with sample<TAB>group, built by collectFile in workflow
-    path het_script
-    val  run_name       // label used for plot title, output filename, and publishDir subfolder
-
-    output:
-    path "*.png"
-
-    script:
-    """
-    # Reconstruct qc_{sample}/ directory structure from bed filenames.
-    # Strip .mapqNN suffix from sample names so groups_tsv lookup still works.
-    for bed in *.coverage.bed; do
-        sample=\${bed%.coverage.bed}
-        sample=\$(echo "\${sample}" | sed 's/\\.mapq[0-9]*\$//')
-        mkdir -p "qc_\${sample}"
-        ln -sf "\${PWD}/\${bed}" "qc_\${sample}/hcs_coverage_raw.bed"
-    done
-
-    python3 ${het_script} \\
-        --dir          . \\
-        --run-name     ${run_name} \\
-        --sample-sheet ${sample_sheet}
-    """
-}
+// ── Import PLOT_HETEROGENEITY three times with aliases (DSL2 multi-call pattern) ─
+include { PLOT_HETEROGENEITY as PLOT_HETEROGENEITY_NOFILTER } from './modules/plot_heterogeneity'
+include { PLOT_HETEROGENEITY as PLOT_HETEROGENEITY_MAPQ20   } from './modules/plot_heterogeneity'
+include { PLOT_HETEROGENEITY as PLOT_HETEROGENEITY_MAPQ30   } from './modules/plot_heterogeneity'
 
 // ── Workflow ──────────────────────────────────────────────────────────────────
 workflow {
@@ -182,7 +154,7 @@ workflow {
         .collect()
         .set { ch_mapq30_beds }
 
-    PLOT_HETEROGENEITY(ch_all_beds,    ch_sample_sheet, het_script, params.run_name)
-    PLOT_HETEROGENEITY(ch_mapq20_beds, ch_sample_sheet, het_script, "${params.run_name}_mapq20")
-    PLOT_HETEROGENEITY(ch_mapq30_beds, ch_sample_sheet, het_script, "${params.run_name}_mapq30")
+    PLOT_HETEROGENEITY_NOFILTER(ch_all_beds,    ch_sample_sheet, het_script, params.run_name)
+    PLOT_HETEROGENEITY_MAPQ20(ch_mapq20_beds,  ch_sample_sheet, het_script, "${params.run_name}_mapq20")
+    PLOT_HETEROGENEITY_MAPQ30(ch_mapq30_beds,  ch_sample_sheet, het_script, "${params.run_name}_mapq30")
 }
