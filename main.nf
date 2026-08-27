@@ -27,6 +27,8 @@ process BEDTOOLS_COVERAGE {
     output:
     tuple val(sample), val(group), path("${sample}.coverage.bed")
     path "${sample}.markdup.txt"
+    path "${sample}.mapq20.coverage.bed"
+    path "${sample}.mapq30.coverage.bed"
 
     script:
     """
@@ -43,11 +45,22 @@ process BEDTOOLS_COVERAGE {
         samtools sort -u -@ ${task.cpus} - | \
         samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
+    # No MAPQ filter
     bedtools coverage \\
         -a normalised_design.bed \\
         -b dedup.bam \\
         -mean \\
         > ${sample}.coverage.bed
+
+    # MAPQ >= 20 filtered coverage
+    samtools view -bq 20 -@ ${task.cpus} dedup.bam | \\
+        bedtools coverage -a normalised_design.bed -b - -mean \\
+        > ${sample}.mapq20.coverage.bed
+
+    # MAPQ >= 30 filtered coverage
+    samtools view -bq 30 -@ ${task.cpus} dedup.bam | \\
+        bedtools coverage -a normalised_design.bed -b - -mean \\
+        > ${sample}.mapq30.coverage.bed
     """
 }
 
@@ -83,28 +96,31 @@ process PLOT_QC {
 process PLOT_HETEROGENEITY {
     conda 'conda-forge::python=3.11 conda-forge::numpy conda-forge::pandas conda-forge::matplotlib-base'
 
-    publishDir "${params.outdir}/${params.run_name}", mode: 'copy'
+    publishDir { "${params.outdir}/${run_name}" }, mode: 'copy'
 
     input:
-    path(beds)         // collected coverage beds, named ${sample}.coverage.bed
-    path(sample_sheet) // TSV with sample<TAB>group, built by collectFile in workflow
+    path(beds)          // collected coverage beds (any suffix: .coverage.bed, .mapq20.coverage.bed, etc.)
+    path(sample_sheet)  // TSV with sample<TAB>group, built by collectFile in workflow
     path het_script
+    val  run_name       // label used for plot title, output filename, and publishDir subfolder
 
     output:
     path "*.png"
 
     script:
     """
-    # Reconstruct qc_{sample}/ directory structure from bed filenames
+    # Reconstruct qc_{sample}/ directory structure from bed filenames.
+    # Strip .mapqNN suffix from sample names so groups_tsv lookup still works.
     for bed in *.coverage.bed; do
         sample=\${bed%.coverage.bed}
+        sample=\$(echo "\${sample}" | sed 's/\\.mapq[0-9]*\$//')
         mkdir -p "qc_\${sample}"
         ln -sf "\${PWD}/\${bed}" "qc_\${sample}/hcs_coverage_raw.bed"
     done
 
     python3 ${het_script} \\
         --dir          . \\
-        --run-name     ${params.run_name} \\
+        --run-name     ${run_name} \\
         --sample-sheet ${sample_sheet}
     """
 }
@@ -152,11 +168,21 @@ workflow {
         .collectFile(name: 'sample_sheet.tsv', newLine: true, seed: 'sample\tgroup')
         .set { ch_sample_sheet }
 
-    // Collect all coverage beds into one process
+    // Collect all coverage beds into one process (three sets: no filter, mapq20, mapq30)
     BEDTOOLS_COVERAGE.out[0]
         .map { sample, group, bed -> bed }
         .collect()
         .set { ch_all_beds }
 
-    PLOT_HETEROGENEITY(ch_all_beds, ch_sample_sheet, het_script)
+    BEDTOOLS_COVERAGE.out[2]
+        .collect()
+        .set { ch_mapq20_beds }
+
+    BEDTOOLS_COVERAGE.out[3]
+        .collect()
+        .set { ch_mapq30_beds }
+
+    PLOT_HETEROGENEITY(ch_all_beds,    ch_sample_sheet, het_script, params.run_name)
+    PLOT_HETEROGENEITY(ch_mapq20_beds, ch_sample_sheet, het_script, "${params.run_name}_mapq20")
+    PLOT_HETEROGENEITY(ch_mapq30_beds, ch_sample_sheet, het_script, "${params.run_name}_mapq30")
 }
