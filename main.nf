@@ -43,14 +43,12 @@ process BEDTOOLS_COVERAGE {
         samtools sort -u -@ ${task.cpus} - | \
         samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
-    # Count fragments (molecules) per target region to match SOPHiA's molecule-based coverage metric.
-    # -f 64 keeps only R1 reads so each fragment is counted once (not twice as two reads).
-    # -counts gives the number of overlapping fragments per region (not per-base mean depth).
-    samtools view -b -f 64 -@ ${task.cpus} dedup.bam | \\
-        bedtools coverage \\
-            -a normalised_design.bed \\
-            -b - \\
-            -counts \\
+    # Compute mean per-base depth per target region.
+    # SOPHiA's "molecule counting" refers to their dedup method, not the coverage metric itself.
+    bedtools coverage \\
+        -a normalised_design.bed \\
+        -b dedup.bam \\
+        -mean \\
         > ${sample}.coverage.bed
     """
 }
