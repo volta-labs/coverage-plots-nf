@@ -16,9 +16,6 @@ if (!params.outdir)  { error "Please provide --outdir <s3://bucket/path>" }
 process BEDTOOLS_COVERAGE {
     tag "$sample"
 
-    memory '32 GB'
-    cpus   4
-
     conda 'bioconda::bedtools=2.31.1 bioconda::samtools=1.19'
 
     input:
@@ -43,7 +40,7 @@ process BEDTOOLS_COVERAGE {
     # markdup requires mate scores: collate (name-sort) -> fixmate -m -> coord-sort -> markdup -r.
     samtools collate -O -u -@ ${task.cpus} ${bam} tmp_collate | \
         samtools fixmate -m -u - - | \
-        samtools sort -u -@ ${task.cpus} - | \
+        samtools sort -u -@ ${task.cpus} -m 2G - | \
         samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
     # Compute mean per-base depth per target region.
