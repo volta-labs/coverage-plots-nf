@@ -38,10 +38,10 @@ process BEDTOOLS_COVERAGE {
     # Remove duplicate reads before coverage calculation to match SOPHiA's molecule-based counting.
     # Input BAMs are pre-deduplication (_aligned_sorted.bam).
     # markdup requires mate scores: collate (name-sort) -> fixmate -m -> coord-sort -> markdup -r.
-    samtools collate -O -u -@ 2 ${bam} tmp_collate | \
+    samtools collate -O -u -@ ${task.cpus} ${bam} tmp_collate | \
         samtools fixmate -m -u - - | \
-        samtools sort -u -@ 2 -m 500M - | \
-        samtools markdup -r -s -f ${sample}.markdup.txt -@ 2 - dedup.bam
+        samtools sort -u -@ ${task.cpus} - | \
+        samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
     # Compute mean per-base depth per target region.
     # SOPHiA's "molecule counting" refers to their dedup method, not the coverage metric itself.
