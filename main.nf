@@ -33,7 +33,9 @@ process BEDTOOLS_COVERAGE {
     # Normalise BED chromosome names to match BAM (add 'chr' prefix if absent).
     # Handles both chr-prefixed BEDs and non-prefixed BEDs (e.g. SOPHiA HCS v2.0).
     # Idempotent: lines already starting with 'chr' pass through unchanged.
-    awk 'BEGIN{OFS="\\t"} /^[^#]/ && \$1 !~ /^chr/ {\$1="chr"\$1} {print}' ${bed} > normalised_design.bed
+    # Skips header rows (column 2 not numeric) to handle BED files like MSK-ACCESS
+    # that include a text header (e.g. "seqName start end").
+    awk 'BEGIN{OFS="\\t"} /^[^#]/ && \$2 !~ /^[0-9]/ {next} /^[^#]/ && \$1 !~ /^chr/ {\$1="chr"\$1} {print}' ${bed} > normalised_design.bed
 
     # Remove duplicate reads before coverage calculation to match SOPHiA's molecule-based counting.
     # Input BAMs are pre-deduplication (_aligned_sorted.bam).
