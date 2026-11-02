@@ -45,10 +45,25 @@ process BEDTOOLS_COVERAGE {
         samtools sort -u -@ ${task.cpus} - | \
         samtools markdup -r -s -f ${sample}.markdup.txt -@ ${task.cpus} - dedup.bam
 
+    # Genome file in BAM header order. bedtools -sorted needs A and B in the same contig order.
+    samtools view -H dedup.bam | \
+        awk -F'\\t' '\$1=="@SQ"{for(i=2;i<=NF;i++){if(\$i~/^SN:/)sn=substr(\$i,4); if(\$i~/^LN:/)ln=substr(\$i,4)}; print sn"\\t"ln}' \
+        > genome.txt
+
+    # Keep only BED lines on contigs in the BAM header (also removes comments and blank lines),
+    # then sort the BED to BAM header order.
+    awk -F'\\t' 'NR==FNR{keep[\$1]=1; next} (\$1 in keep)' genome.txt normalised_design.bed > design.in_genome.bed
+    echo "BED intervals: \$(grep -c . normalised_design.bed) in, \$(wc -l < design.in_genome.bed) on BAM contigs" >&2
+    bedtools sort -g genome.txt -i design.in_genome.bed > design.sorted.bed
+
     # Compute mean per-base depth per target region.
     # SOPHiA's "molecule counting" refers to their dedup method, not the coverage metric itself.
+    # -sorted streams both files (low memory). Without it, bedtools loads the whole BAM into RAM,
+    # which ran out of memory at 32 GB on deep cfDNA BAMs (ILMN175, SGULP_cfDNA_11).
     bedtools coverage \\
-        -a normalised_design.bed \\
+        -sorted \\
+        -g genome.txt \\
+        -a design.sorted.bed \\
         -b dedup.bam \\
         -mean \\
         > ${sample}.coverage.bed
